@@ -1,0 +1,6 @@
+riak/
+ebin/
+.eunit/
+*~
+data/
+erl_crash.dump
