@@ -105,8 +105,10 @@ rst_test_() ->
 
                   error_logger:info_msg("Stopping node 1~n"),
                   slave:stop(N1),
+                  read(N2, B, K, R1),
                   read(N3, B, K, R1),
                   read(N4, B, K, R1),
+                  assert_read(N2, B, K, R1),
                   assert_read(N3, B, K, R1),
                   assert_read(N4, B, K, R1),
                   
@@ -174,23 +176,36 @@ leave(N) ->
     rpc:call(N, riak_kv_console, leave, [[]]).
     
 wait_for_cluster(Nodes) ->
-    wait_for_cluster(Nodes, 10).
+    Me = self(),
+    [rpc:call(N, riak_core_ring_events, add_callback, 
+              [fun(Ring) -> Me ! {ring_update, N, Ring} end]) || N <- Nodes],
+    wait_for_cluster(Nodes, []).
 
-wait_for_cluster(_, 0) ->
-    error;
-wait_for_cluster(Nodes, Retries) ->
-    RingHashes = lists:foldl(fun(N, Acc) ->
-                                     Hash = node_ring_hash(N),
-                                     [{N, Hash}|Acc]
-                             end, [], Nodes),
-    case length(lists:ukeysort(2, RingHashes)) =:= 1 of
-        true ->
-            ok;
-        false ->
-            error_logger:info_report(RingHashes),
-            timer:sleep(1000),
-            wait_for_cluster(Nodes, Retries-1)
+wait_for_cluster(Nodes, RingHashes) ->
+    receive
+        {ring_update, N, Ring} ->
+            RingHash = erlang:phash2(element(4, Ring)),
+            check_rings(Nodes, lists:keystore(N, 1, RingHashes, {N, RingHash}))
     end.
 
-node_ring_hash(Node) ->
-    erlang:phash2(element(4, element(2, rpc:call(Node, riak_core_ring_manager, get_my_ring, [])))).
+check_rings(Nodes, RingHashes) ->
+    case length(Nodes) =:= length(RingHashes) of
+        false ->
+            send_rings(Nodes),
+            wait_for_cluster(Nodes, RingHashes);
+        true ->
+            case length(lists:ukeysort(2, RingHashes)) =:= 1 of
+                true ->
+                    ok;
+                false ->
+                    send_rings(Nodes),
+                    wait_for_cluster(Nodes, RingHashes)
+            end
+    end.
+
+send_rings(Nodes) ->
+    lists:foldl(fun(Current, Previous) ->
+                        rpc:call(Current, riak_core_gossip, send_ring, [Previous]),
+                        Current
+                end, hd(lists:reverse(Nodes)), Nodes).
+    
