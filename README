@@ -1,0 +1,41 @@
+Attempting to automate functional tests for Riak.
+
+
+Requires Erlang R13B04
+
+
+Using
+	make test
+
+
+What does "make test" do?
+1. Pulls down Riak from https://hg.basho.com/riak if necessary
+2. Builds riak is necessary (make all)
+3. Clears out an previous test data (.eunit/tmp)
+4. Runs tests (test/)
+
+
+What do the tests do?
+Review test/rst_tests.erl for mildly interestng tests.
+
+The tests currently:
+1. Start remote nodes
+2. Start riak on those remote nodes
+3. Perfom a client_test (riak-admin test)
+4. Test cluster membership
+	a. Start node 1
+	b. Write data
+	c. Start node 2
+	d. Read data from node 2
+	e. Start node 3
+	f. Read data from node 3
+	g. Start node 4
+	h. Read data from node 4
+	i. Stop node 1
+	j. Read data from nodes 2,3,4
+	k. Stop node 2
+	l. Read data from nodes 3,4
+	m. Restart nodes 1,2
+	n. Read data from all nodes
+	o. Leave nodes 1,2,3
+	p. Read data from node 4
