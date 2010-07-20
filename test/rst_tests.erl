@@ -191,14 +191,14 @@ wait_for_cluster(Nodes, RingHashes) ->
 check_rings(Nodes, RingHashes) ->
     case length(Nodes) =:= length(RingHashes) of
         false ->
-            send_rings(Nodes),
+            %send_rings(Nodes),
             wait_for_cluster(Nodes, RingHashes);
         true ->
             case length(lists:ukeysort(2, RingHashes)) =:= 1 of
                 true ->
                     ok;
                 false ->
-                    send_rings(Nodes),
+                    %send_rings(Nodes),
                     wait_for_cluster(Nodes, RingHashes)
             end
     end.
