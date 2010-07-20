@@ -38,20 +38,20 @@ setup() ->
     net_kernel:start(['rst@127.0.0.1']).
 
 rst_test_() ->
-    {setup, fun setup/0,
+    {setup, fun setup/0, {generator, fun() -> 
      [
       {"start_node/4 should start a remote node",
        ?_test(begin
                   Node = rst:start_node('127.0.0.1', 'test_start', "", ?RIAK),
                   ?assertEqual(pong, net_adm:ping(Node)),
-                  cleanup_nodes([Node])
+                  cleanup()
               end)},
 
       {"remote node should set application environment from Arg",
        ?_test(begin
                   Node = rst:start_node('127.0.0.1', 'test_env', "-kernel key value", ?RIAK),
                   ?assertEqual({ok, value}, rpc:call(Node, application, get_env, [kernel, key])),
-                  cleanup_nodes([Node])
+                  cleanup()
               end)},
       
       {"remote node should set bitcask environment value",
@@ -59,25 +59,24 @@ rst_test_() ->
                   Node = rst:start_node('127.0.0.1', 'test_bitcask_env', " -bitcask key 'value'", ?RIAK),
                   ok = rpc:call(Node, application, start, [bitcask]),
                   ?assertEqual({ok, value}, rpc:call(Node, application, get_env, [bitcask, key])),
-                  cleanup_nodes([Node])
+                  cleanup()
               end)},
 
       {"remote node should have access to riak",
        ?_test(begin
                   Node = rst:start_node('127.0.0.1', 'test_riak_access', "", ?RIAK),
                   ?assert(non_existing =/= rpc:call(Node, code, which, [riak_core])),
-                  cleanup_nodes([Node])
+                  cleanup()
               end)},
 
       {"riak should start successfully (check client_test and data directory)",
        ?_test(begin
-                  Config = rst_config:new('riak_start', []),
-                  Arg = rst_config:to_string(Config),
+                  Arg = rst_config:to_string(riak_unique_config(1)),
                   Node = rst:start_node('127.0.0.1', 'riak_start', Arg, ?RIAK),
                   rst:start_riak(Node),
                   ?assertEqual(ok, rpc:call(Node, riak, client_test, [Node])),
-                  ?assert(filelib:is_dir("tmp/riak_start/data/bitcask")),
-                  cleanup_nodes([Node])
+                  ?assert(filelib:is_dir("tmp/1/data/bitcask")),
+                  cleanup()
               end)},
 
       {"cluster membership test", {timeout, 1000, 
@@ -136,13 +135,45 @@ rst_test_() ->
                   leave(N2),
                   leave(N3),
                   read(N4, B, K, R1),
-                  assert_read(N4, B, K, R1)
+                  assert_read(N4, B, K, R1),
+                  cleanup()
               end)}}
-     ]}.
+     ] end}}.
 
-cleanup_nodes(Nodes) ->
+cleanup() ->
     lists:foreach(fun(Node) ->
-                          slave:stop(Node) end, Nodes).
+                          slave:stop(Node) end, nodes()),
+    os:cmd("rm -rf tmp").
+
+riak_unique_config(Int) when is_integer(Int) ->
+    Base = riak_app_config(),
+    Files = rst_config:merge(riak_config_files(integer_to_list(Int)), Base, 2),
+    rst_config:merge(riak_config_ports(Int), Files, 2).
+
+riak_config_ports(Int) when is_integer(Int) ->
+    H = (P = (W = 7000 + (Int - 1) * 3) + 1) + 1,
+    [
+     {riak_core, [{web_ip, "127.0.0.1"}, {web_port, W}, {handoff_port, H}]},
+     {riak_kv, [{pb_ip, "127.0.0.1"}, {pb_port, P}]}
+    ].
+
+riak_config_files(Name) when is_list(Name) ->
+    [
+     {riak_core, [
+                  {ring_state_dir, filename:join(["tmp", Name, "data", "ring"])}
+                 ]},
+     {bitcask, [
+                {data_root, filename:join(["tmp", Name, "data", "bitcask"])}
+               ]},
+     {sasl, [
+             {sasl_error_logger, {file, filename:join(["tmp", Name, "log", "sasl-error.log"])}},
+             {error_logger_mf_dir, filename:join(["tmp", Name, "log", "sasl"])}
+            ]}
+    ].
+
+riak_app_config() ->
+    {ok, [Terms]} = file:consult(filename:join([?RIAK, "rel", "files", "app.config"])),
+    Terms.
 
 %% Start a node named Int with unique web, protobuff, and handoff ports
 %% ports are incremented from 7000
@@ -203,9 +234,9 @@ check_rings(Nodes, RingHashes) ->
             end
     end.
 
-send_rings(Nodes) ->
-    lists:foldl(fun(Current, Previous) ->
-                        rpc:call(Current, riak_core_gossip, send_ring, [Previous]),
-                        Current
-                end, hd(lists:reverse(Nodes)), Nodes).
+%send_rings(Nodes) ->
+%    lists:foldl(fun(Current, Previous) ->
+%                        rpc:call(Current, riak_core_gossip, send_ring, [Previous]),
+%                        Current
+%                end, hd(lists:reverse(Nodes)), Nodes).
     
