@@ -1,12 +1,9 @@
 -module(rst).
 
--include("rst.hrl").
-
--export([start_node/4, 
+-export([start_node/3, 
          start_riak/1,
          start_application/2,
-         clone_repo/2,
-         run_make/2
+         config_to_string/1
          ]).
 
 -ifdef(TEST).
@@ -15,12 +12,10 @@
 
 
 %% start node and add paths
-start_node(Host, Name, Arg, RiakDir) ->
-    %%error_logger:error_report(Arg),
+start_node(Host, Name, Arg) ->
     {ok, Node} = slave:start_link(Host, Name, Arg),
-    AppEbins = filelib:wildcard(filename:join([RiakDir, "apps", "*", "ebin"])),
-    DebEbins = filelib:wildcard(filename:join([RiakDir, "deps", "*", "ebin"])),
-    ok = rpc:call(Node, code, add_paths, [AppEbins ++ DebEbins]), 
+    Ebins = filelib:wildcard(filename:join([filename:dirname(code:which(?MODULE)), "..", "deps", "*", "ebin"])),
+    ok = rpc:call(Node, code, add_paths, [Ebins]),
     Node.
 
 %% start riak on the given node
@@ -47,16 +42,33 @@ collect_deps(Node, [App|Applications], Collected) ->
     {ok, Deps} = rpc:call(Node, application, get_key, [App, applications]),
     collect_deps(Node, Applications ++ Deps, Collected ++ Deps).
 
-%% AppDir is the location to clone to
-%% Url is the URL of the hg repo
-%% Rev is the version to checkout
-clone_repo(AppDir, {hg, Url, Rev}) ->
-    ok = filelib:ensure_dir(AppDir),
-    rebar_utils:sh(?FMT("hg clone -U ~s ~s", [Url, filename:basename(AppDir)]), [], filename:dirname(AppDir)),
-    rebar_utils:sh(?FMT("hg update ~s", [Rev]), [], AppDir).
+%% Convert an application config proplist to a string - useful 
+%% for passing application variables to slave:start_link/3 
+%% 
+%% Currently only works for atom, integer, and list values
+config_to_string(Config) ->
+    lists:foldl(fun({App, Params}, Acc) ->
+                  Acc1 = Acc ++ " -" ++ atom_to_list(App),
+                  lists:foldl(fun({Par, Val}, Pacc) ->
+                                      Pacc ++ " " ++ atom_to_list(Par) ++ 
+                                          " '" ++ value_to_string(Val) ++ "'"
+                              end,
+                              Acc1,
+                              Params)
+                end,
+                "",
+                Config).
 
-run_make(Dir, Args) ->
-    {ok, Cwd} = file:get_cwd(),
-    ok = file:set_cwd(Dir),
-    os:cmd("make " ++ Args),
-    ok = file:set_cwd(Cwd).
+value_to_string(Tuple) when is_tuple(Tuple) ->
+    Values = lists:foldl(fun(Val, Acc) ->
+                                 [value_to_string(Val)|Acc]
+                         end,
+                         [],
+                         tuple_to_list(Tuple)),
+    "{" ++ string:join(lists:reverse(Values), ", ") ++ "}";
+value_to_string(Atom) when is_atom(Atom) ->
+    atom_to_list(Atom);
+value_to_string(Int) when is_integer(Int) ->
+    integer_to_list(Int);
+value_to_string(List) when is_list(List) ->
+    "\"" ++ List ++ "\"".

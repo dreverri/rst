@@ -4,3 +4,4 @@ ebin/
 *~
 data/
 erl_crash.dump
+deps/

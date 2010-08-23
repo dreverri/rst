@@ -1,40 +1,8 @@
 -module(rst_tests).
 -include_lib("eunit/include/eunit.hrl").
 
-%% Define when riak repo should be relative to ".eunit"
--define(RIAK, "../riak").
-
 setup() ->
-    %% @todo find a better way of outputting info from setup
-    %% @todo make riak dependency configurable (DVCS, URL, Dir)
-    RiakDir = ?RIAK,
-    case filelib:is_dir(RiakDir) of
-        true ->
-            error_logger:info_msg("Found riak in directory: ~p\n", [RiakDir]);
-        false ->
-            error_logger:info_msg("Did not find riak in directory: ~p\n", [RiakDir]),
-            error_logger:info_msg("Cloning riak to directory: ~p\n", [RiakDir]),
-            rst:clone_repo(RiakDir, {hg, "https://hg.basho.com/riak", "tip"})
-    end,
-
-    %% run make all
-    RiakCoreEbin = filename:join([RiakDir, "apps", "riak_core", "ebin"]),
-    case filelib:is_file(filename:join([RiakCoreEbin, "riak_core.beam"])) of
-        true ->
-            error_logger:info_msg("Found riak_core.beam in directory: ~p\n", [RiakCoreEbin]);
-        false ->
-            error_logger:info_msg("Did not find riak_core.beam in directory: ~p\n", [RiakCoreEbin]),
-            error_logger:info_msg("Running make all in directory: ~p\n", [RiakCoreEbin]),
-            rst:run_make(RiakDir, "all"),
-            AppEbins = filelib:wildcard(filename:join([RiakDir, "apps", "*", "ebin"])),
-            DebEbins = filelib:wildcard(filename:join([RiakDir, "deps", "*", "ebin"])),
-            code:add_paths(AppEbins ++ DebEbins)
-    end,
-
-    %% clear out any node data (tmp/NodeName)
     os:cmd("rm -rf tmp"),
-
-    %% ensure net kernel is started so we can start other nodes
     net_kernel:start(['rst@127.0.0.1']).
 
 rst_test_() ->
@@ -42,21 +10,21 @@ rst_test_() ->
      [
       {"start_node/4 should start a remote node",
        ?_test(begin
-                  Node = rst:start_node('127.0.0.1', 'test_start', "", ?RIAK),
+                  Node = rst:start_node('127.0.0.1', 'test_start', ""),
                   ?assertEqual(pong, net_adm:ping(Node)),
                   cleanup()
               end)},
 
       {"remote node should set application environment from Arg",
        ?_test(begin
-                  Node = rst:start_node('127.0.0.1', 'test_env', "-kernel key value", ?RIAK),
+                  Node = rst:start_node('127.0.0.1', 'test_env', "-kernel key value"),
                   ?assertEqual({ok, value}, rpc:call(Node, application, get_env, [kernel, key])),
                   cleanup()
               end)},
       
       {"remote node should set bitcask environment value",
        ?_test(begin
-                  Node = rst:start_node('127.0.0.1', 'test_bitcask_env', " -bitcask key 'value'", ?RIAK),
+                  Node = rst:start_node('127.0.0.1', 'test_bitcask_env', " -bitcask key 'value'"),
                   ok = rpc:call(Node, application, start, [bitcask]),
                   ?assertEqual({ok, value}, rpc:call(Node, application, get_env, [bitcask, key])),
                   cleanup()
@@ -64,15 +32,15 @@ rst_test_() ->
 
       {"remote node should have access to riak",
        ?_test(begin
-                  Node = rst:start_node('127.0.0.1', 'test_riak_access', "", ?RIAK),
+                  Node = rst:start_node('127.0.0.1', 'test_riak_access', ""),
                   ?assert(non_existing =/= rpc:call(Node, code, which, [riak_core])),
                   cleanup()
               end)},
 
       {"riak should start successfully (check client_test and data directory)",
        ?_test(begin
-                  Arg = rst_config:to_string(riak_unique_config(1)),
-                  Node = rst:start_node('127.0.0.1', 'riak_start', Arg, ?RIAK),
+                  Arg = rst:config_to_string(riak_config(1)),
+                  Node = rst:start_node('127.0.0.1', 'riak_start', Arg),
                   rst:start_riak(Node),
                   ?assertEqual(ok, rpc:call(Node, riak, client_test, [Node])),
                   ?assert(filelib:is_dir("tmp/1/data/bitcask")),
@@ -87,7 +55,7 @@ rst_test_() ->
                   R1 = 1,
                   
                   error_logger:info_msg("Starting node 1~n"),
-                  N1 = quick_start(1, ?RIAK),
+                  N1 = quick_start(1),
                   ok = write(N1, B, K, V),
                   
                   error_logger:info_msg("Starting node 2~n"),
@@ -119,8 +87,8 @@ rst_test_() ->
                   assert_read(N4, B, K, R1),
                   
                   error_logger:info_msg("Starting nodes 1 and 2~n"),
-                  quick_start(1, ?RIAK),
-                  quick_start(2, ?RIAK),
+                  quick_start(1),
+                  quick_start(2),
                   read(N1, B, K, R1),
                   read(N2, B, K, R1),
                   read(N3, B, K, R1),
@@ -142,26 +110,23 @@ rst_test_() ->
 
 cleanup() ->
     lists:foreach(fun(Node) ->
-                          slave:stop(Node) end, nodes()),
-    os:cmd("rm -rf tmp").
+                          slave:stop(Node) end, nodes()).
 
-riak_unique_config(Int) when is_integer(Int) ->
-    Base = riak_app_config(),
-    Files = rst_config:merge(riak_config_files(integer_to_list(Int)), Base, 2),
-    rst_config:merge(riak_config_ports(Int), Files, 2).
-
-riak_config_ports(Int) when is_integer(Int) ->
+riak_config(Int) when is_integer(Int) ->
     H = (P = (W = 7000 + (Int - 1) * 3) + 1) + 1,
-    [
-     {riak_core, [{web_ip, "127.0.0.1"}, {web_port, W}, {handoff_port, H}]},
-     {riak_kv, [{pb_ip, "127.0.0.1"}, {pb_port, P}]}
-    ].
-
-riak_config_files(Name) when is_list(Name) ->
+    Name = integer_to_list(Int),
     [
      {riak_core, [
+                  {web_ip, "127.0.0.1"}, 
+                  {web_port, W}, 
+                  {handoff_port, H},
                   {ring_state_dir, filename:join(["tmp", Name, "data", "ring"])}
                  ]},
+     {riak_kv, [
+                {pb_ip, "127.0.0.1"}, 
+                {pb_port, P},
+                {storage_backend, riak_kv_bitcask_backend}
+               ]},
      {bitcask, [
                 {data_root, filename:join(["tmp", Name, "data", "bitcask"])}
                ]},
@@ -171,23 +136,19 @@ riak_config_files(Name) when is_list(Name) ->
             ]}
     ].
 
-riak_app_config() ->
-    {ok, [Terms]} = file:consult(filename:join([?RIAK, "rel", "files", "app.config"])),
-    Terms.
-
 %% Start a node named Int with unique web, protobuff, and handoff ports
 %% ports are incremented from 7000
 %% 1 -> 7000, 7001, 7002
 %% 2 -> 7003, 7004, 7005
-quick_start(Int, RiakDir) ->
-    C = rst_config:new(Int),
-    A = rst_config:to_string(C),
-    Node = rst:start_node('127.0.0.1', list_to_atom(integer_to_list(Int)), A, RiakDir),
+quick_start(Int) ->
+    C = riak_config(Int),
+    A = rst:config_to_string(C),
+    Node = rst:start_node('127.0.0.1', list_to_atom(integer_to_list(Int)), A),
     rst:start_riak(Node),
     Node.
 
 start_join_wait(Int, Cluster) ->
-    N = quick_start(Int, ?RIAK),
+    N = quick_start(Int),
     ok = rpc:call(N, riak, join, [hd(Cluster)]),
     ok = wait_for_cluster([N|Cluster]),
     N.
@@ -222,21 +183,12 @@ wait_for_cluster(Nodes, RingHashes) ->
 check_rings(Nodes, RingHashes) ->
     case length(Nodes) =:= length(RingHashes) of
         false ->
-            %send_rings(Nodes),
             wait_for_cluster(Nodes, RingHashes);
         true ->
             case length(lists:ukeysort(2, RingHashes)) =:= 1 of
                 true ->
                     ok;
                 false ->
-                    %send_rings(Nodes),
                     wait_for_cluster(Nodes, RingHashes)
             end
     end.
-
-%send_rings(Nodes) ->
-%    lists:foldl(fun(Current, Previous) ->
-%                        rpc:call(Current, riak_core_gossip, send_ring, [Previous]),
-%                        Current
-%                end, hd(lists:reverse(Nodes)), Nodes).
-    
