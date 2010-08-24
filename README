@@ -1,4 +1,4 @@
-Attempting to automate functional tests for Riak.
+Test Riak cluster behavior using the slave module.
 
 
 Requires Erlang R13B04
@@ -9,10 +9,10 @@ Using
 
 
 What does "make test" do?
-1. Pulls down Riak from https://hg.basho.com/riak if necessary
-2. Builds riak is necessary (make all)
+1. Pulls riak_kv into the deps folder (make deps)
+2. Compiles code (make compile)
 3. Clears out an previous test data (.eunit/tmp)
-4. Runs tests (test/)
+4. Runs tests 
 
 
 What do the tests do?
